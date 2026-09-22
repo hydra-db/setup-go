@@ -1,17 +1,17 @@
 # setup-go
 
-A drop-in replacement for [`actions/setup-go`](https://github.com/actions/setup-go).
+A fork of [`cloudx-io/setup-go`](https://github.com/cloudx-io/setup-go) for HydraDB's Go workspaces.
 
 Use this to efficiently parallelize your golang lint, build, and test jobs. They each get their own cache entry and don't conflict with each other. The cache is updated after every run so every time you merge a PR, CI only builds and tests the packages that have changed. We accomplish this by installing go and caching `GOCACHE` and `GOMODCACHE` with job-specific cache keys.
 
-For a much deeper technical dive on how this works, read [our post on the CloudX blog](https://www.cloudx.ai/posts/setup-go).
+For a deeper technical explanation of the cache strategy, read [CloudX's post](https://www.cloudx.ai/posts/setup-go).
 
 ## Usage
 
 ```yaml
-- uses: cloudx-io/setup-go@v1
+- uses: hydra-db/setup-go@main
   with:
-    go-version: "1.26.1"
+    go-version: "1.27.1"
     cache-key-prefix: "test"
 ```
 
@@ -23,9 +23,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: cloudx-io/setup-go-cache@v1
+      - uses: hydra-db/setup-go@main
         with:
-          go-version: "1.26.1"
+          go-version: "1.27.1"
           cache-key-prefix: "test"
       - run: go test ./...
 
@@ -33,9 +33,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: cloudx-io/setup-go-cache@v1
+      - uses: hydra-db/setup-go@main
         with:
-          go-version: "1.26.1"
+          go-version: "1.27.1"
           cache-key-prefix: "lint"
       - uses: golangci/golangci-lint-action@v9
 
@@ -43,9 +43,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: cloudx-io/setup-go-cache@v1
+      - uses: hydra-db/setup-go@main
         with:
-          go-version: "1.26.1"
+          go-version: "1.27.1"
           cache-key-prefix: "build-api"
       - run: go build -o bin/api ./cmd/api
 ```
@@ -56,7 +56,7 @@ jobs:
 |:--- |:--- |:--- |:--- |
 | `go-version` | yes | | Go version to install. Passed through to `actions/setup-go`. |
 | `cache-key-prefix` | yes | | Distinguishes this job's cache from other Go jobs in the same workflow. |
-| `cache-dependency-path` | no | `**/go.sum` | Glob hashed into the cache key. |
+| `cache-dependency-path` | no | `**/go.sum` | Glob for the `go.sum` files to hash. The action also hashes all `go.mod` files and root `go.work`/`go.work.sum` when present. |
 | `max-staleness-hours` | no | `2` | Grace period, in hours, for unused build-cache files. Files untouched for longer than this interval are trimmed before save. |
 
 ### Outputs
@@ -70,7 +70,7 @@ jobs:
 Exact key (saved at the end of a successful job):
 
 ```text
-go-cache-<os>-<arch>-<prefix>-<go-version>-<branch>-<hash(go.sum)>-<run_id>
+go-cache-<os>-<arch>-<prefix>-<go-version>-<branch>-<hash(go.sum,go.mod,go.work,go.work.sum)>-<run_id>
 ```
 
 `run_id` makes every successful save a new exact key, so two concurrent jobs cannot overwrite each other.
@@ -79,10 +79,12 @@ Keys will never match exactly because they include the `run_id`. Instead, every
 blobs are restored from the GitHub Actions cache by prefix matching in this
 priority order:
 
-1. Same branch + same `go.sum`
-2. Same branch, any `go.sum`
-3. Default branch + same `go.sum`
-4. Default branch, any `go.sum`
+1. Same branch + same dependency files
+2. Same branch, any dependency files
+3. Default branch + same dependency files
+4. Default branch, any dependency files
+
+The hash only selects a GitHub cache snapshot. Go still checks the full build and test inputs before reusing an entry in `GOCACHE`, including source from other workspace modules. A binary such as `application/cmd/llm-mock` shares the `application` module's dependency files; it does not need a separate `go.sum`.
 
 A failed job doesn't save its final cache state.
 
