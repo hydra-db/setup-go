@@ -13,7 +13,7 @@ inputs:
     description: 'The Go version to download (if necessary) and use.'
     required: true
   cache-dependency-path:
-    description: 'Glob hashed into the cache key. Use a single glob; defaults to go.sum files.'
+    description: 'Glob for go.sum files hashed into the cache key. Go module manifests and root workspace files are also hashed.'
     required: false
     default: '**/go.sum'
   max-staleness-hours:
@@ -41,6 +41,12 @@ runs:
       run: |
         echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
         echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+    - name: hash Go dependency files
+      id: dependency-hash
+      shell: bash
+      env:
+        DEPENDENCY_HASH: ${{ hashFiles(inputs.cache-dependency-path, '**/go.mod', 'go.work', 'go.work.sum') }}
+      run: echo "hash=$DEPENDENCY_HASH" >> "$GITHUB_OUTPUT"
     - name: cache
       id: cache
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
@@ -48,11 +54,11 @@ runs:
         path: |
           ${{ steps.get-cache-paths.outputs.gocache }}
           ${{ steps.get-cache-paths.outputs.gomodcache }}
-        key: go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.head_ref || github.ref_name }}-${{ hashFiles(inputs.cache-dependency-path) }}-${{ github.run_id }}
+        key: go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.head_ref || github.ref_name }}-${{ steps.dependency-hash.outputs.hash }}-${{ github.run_id }}
         restore-keys: |
-          go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.head_ref || github.ref_name }}-${{ hashFiles(inputs.cache-dependency-path) }}-
+          go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.head_ref || github.ref_name }}-${{ steps.dependency-hash.outputs.hash }}-
           go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.head_ref || github.ref_name }}-
-          go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.event.repository.default_branch }}-${{ hashFiles(inputs.cache-dependency-path) }}-
+          go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.event.repository.default_branch }}-${{ steps.dependency-hash.outputs.hash }}-
           go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.event.repository.default_branch }}-
     # Trim GOCACHE to this run's working set. This action's post-hook runs
     # in reverse declaration order: after the consumer workflow's main steps
