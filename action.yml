@@ -20,11 +20,19 @@ inputs:
     description: 'Whole hours to retain GOCACHE entries before the job start time.'
     required: false
     default: '2'
+  save:
+    description: >-
+      Whether to save the cache at the end of the job. Set it to false where the
+      saved entry would never be reused (typically pull_request runs, whose cache
+      is scoped to the PR ref): the job still restores the newest base-branch
+      entry but skips the multi-GB upload and the trim that prepares it.
+    required: false
+    default: 'true'
 
 outputs:
   cache-hit:
     description: 'True if an exact cache key match was restored'
-    value: ${{ steps.cache.outputs.cache-hit }}
+    value: ${{ steps.cache.outputs.cache-hit || steps.restore.outputs.cache-hit }}
 
 runs:
   using: composite
@@ -47,8 +55,18 @@ runs:
       env:
         DEPENDENCY_HASH: ${{ hashFiles(inputs.cache-dependency-path, '**/go.mod', 'go.work', 'go.work.sum') }}
       run: echo "hash=$DEPENDENCY_HASH" >> "$GITHUB_OUTPUT"
+    # A pull request restores from the branch it targets (github.base_ref)
+    # before the repository default branch: a repo whose PRs land on a
+    # long-lived integration branch (staging) rarely has a fresh default-branch
+    # entry, and a PR can only read caches from its own ref, its base ref and
+    # the default branch. On a push, base_ref is empty and the fallback is the
+    # default branch exactly as before; the duplicate lines are then harmless.
+    #
+    # Exactly one of the two steps below runs. actions/cache restores now and
+    # saves in its post hook; actions/cache/restore never saves.
     - name: cache
       id: cache
+      if: inputs.save == 'true'
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
       with:
         path: |
@@ -58,6 +76,24 @@ runs:
         restore-keys: |
           go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.head_ref || github.ref_name }}-${{ steps.dependency-hash.outputs.hash }}-
           go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.head_ref || github.ref_name }}-
+          go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.base_ref || github.event.repository.default_branch }}-${{ steps.dependency-hash.outputs.hash }}-
+          go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.base_ref || github.event.repository.default_branch }}-
+          go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.event.repository.default_branch }}-${{ steps.dependency-hash.outputs.hash }}-
+          go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.event.repository.default_branch }}-
+    - name: restore cache (no save)
+      id: restore
+      if: inputs.save != 'true'
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+      with:
+        path: |
+          ${{ steps.get-cache-paths.outputs.gocache }}
+          ${{ steps.get-cache-paths.outputs.gomodcache }}
+        key: go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.head_ref || github.ref_name }}-${{ steps.dependency-hash.outputs.hash }}-${{ github.run_id }}
+        restore-keys: |
+          go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.head_ref || github.ref_name }}-${{ steps.dependency-hash.outputs.hash }}-
+          go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.head_ref || github.ref_name }}-
+          go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.base_ref || github.event.repository.default_branch }}-${{ steps.dependency-hash.outputs.hash }}-
+          go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.base_ref || github.event.repository.default_branch }}-
           go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.event.repository.default_branch }}-${{ steps.dependency-hash.outputs.hash }}-
           go-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key-prefix }}-${{ inputs.go-version }}-${{ github.event.repository.default_branch }}-
     # Trim GOCACHE to this run's working set. This action's post-hook runs
@@ -73,6 +109,7 @@ runs:
     # pinned. A workspace-relative path like ./.github/actions/... only works
     # when the action lives in the consumer repo.
     - name: trim GOCACHE
+      if: inputs.save == 'true'
       uses: $/trim-gocache
       with:
         gocache: ${{ steps.get-cache-paths.outputs.gocache }}

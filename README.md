@@ -58,6 +58,7 @@ jobs:
 | `cache-key-prefix` | yes | | Distinguishes this job's cache from other Go jobs in the same workflow. |
 | `cache-dependency-path` | no | `**/go.sum` | Glob for the `go.sum` files to hash. The action also hashes all `go.mod` files and root `go.work`/`go.work.sum` when present. |
 | `max-staleness-hours` | no | `2` | Grace period, in hours, for unused build-cache files. Files untouched for longer than this interval are trimmed before save. |
+| `save` | no | `true` | Save the cache at the end of the job. Set `false` where a saved entry is never reused, typically `pull_request` runs: the job still restores, but skips the upload (several GB for a large module) and the trim. |
 
 ### Outputs
 
@@ -81,12 +82,28 @@ priority order:
 
 1. Same branch + same dependency files
 2. Same branch, any dependency files
-3. Default branch + same dependency files
-4. Default branch, any dependency files
+3. Pull request base branch + same dependency files
+4. Pull request base branch, any dependency files
+5. Default branch + same dependency files
+6. Default branch, any dependency files
+
+Steps 3–4 apply to `pull_request` runs, whose base branch is often a long-lived integration branch (e.g. `staging`) rather than the default branch. On a push they collapse into 5–6.
+
+## Save only where the entry is reused
+
+A `pull_request` run's cache is scoped to the PR ref: no other PR can read it, and the base branch never does. Saving it on every run uploads a multi-GB entry that at most that same PR reuses — and every upload counts toward the repository's 10 GB cache limit, evicting the base-branch entries every other PR restores from. Save on pushes to the branches PRs target, and restore-only everywhere else:
+
+```yaml
+- uses: hydra-db/setup-go@<sha>
+  with:
+    go-version: "1.27.1"
+    cache-key-prefix: "test"
+    save: ${{ github.event_name == 'push' }}
+```
 
 The hash only selects a GitHub cache snapshot. Go still checks the full build and test inputs before reusing an entry in `GOCACHE`, including source from other workspace modules. A binary such as `application/cmd/llm-mock` shares the `application` module's dependency files; it does not need a separate `go.sum`.
 
-A failed job doesn't save its final cache state.
+A failed job doesn't save its final cache state. With `save: false` no job does.
 
 ## Trimming
 
